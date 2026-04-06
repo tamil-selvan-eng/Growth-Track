@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ──────────────────────────────────────────────────────
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (request.auth.token.email == "tamilaviate@gmail.com" &&
+         request.auth.token.email_verified == true);
+    }
+
+    // FIX: original regex had Z outside the optional group, causing all writes
+    // from new Date().toISOString() to fail validation.
+    // new Date().toISOString() produces e.g. "2026-04-06T12:34:56.789Z"
+    // The pattern below accepts both with and without milliseconds + Z.
+    function isValidDateString(dateStr) {
+      return dateStr is string &&
+             dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z?$");
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+             email.matches("^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['username', 'createdAt']) &&
+             data.username is string &&
+             data.username.size() > 0 &&
+             data.username.size() <= 50 &&
+             isValidDateString(data.createdAt) &&
+             (!('email' in data) || data.email == '' || isValidEmail(data.email)) &&
+             (!('theme' in data) || data.theme in ['light', 'dark']);
+    }
+
+    function isValidHabit(data) {
+      return data.keys().hasAll(['name', 'color', 'completedDays', 'createdAt']) &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.name.size() <= 100 &&
+             data.color is string &&
+             data.color.matches("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$") &&
+             data.completedDays is list &&
+             data.completedDays.size() <= 1000 &&
+             isValidDateString(data.createdAt);
+    }
+
+    function isValidSkill(data) {
+      return data.keys().hasAll(['name', 'color', 'progress', 'createdAt']) &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.name.size() <= 100 &&
+             data.color is string &&
+             data.color.matches("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$") &&
+             data.progress is int &&
+             data.progress >= 0 &&
+             data.progress <= 100 &&
+             isValidDateString(data.createdAt);
+    }
+
+    // ── Users ────────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read:   if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) &&
+                       request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // ── Habits ─────────────────────────────────────────────────────────────
+      match /habits/{habitId} {
+        allow read:   if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidHabit(request.resource.data);
+        allow update: if isOwner(userId) && isValidHabit(request.resource.data) &&
+                         request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // ── Skills ─────────────────────────────────────────────────────────────
+      match /skills/{skillId} {
+        allow read:   if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && isValidSkill(request.resource.data);
+        allow update: if isOwner(userId) && isValidSkill(request.resource.data) &&
+                         request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+    }
+  }
+}
